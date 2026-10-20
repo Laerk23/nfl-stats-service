@@ -14,15 +14,23 @@ async def _get(url: str, params=None):
         return r.json()
 
 
+def extract_athlete_id(espn_id: str):
+    """
+    Supports BOTH:
+    - ESPN UID: s:20~l:28~a:4431452
+    - Numeric ID: 4431452
+    """
+    if "~a:" in espn_id:
+        return espn_id.split("~a:")[-1]
+    return espn_id
+
+
 async def search_players_by_name(query: str):
     print("SEARCH FUNCTION HIT WITH:", query)
 
-    params = {
-        "query": query,
-        "limit": 10
-    }
-
+    params = {"query": query, "limit": 10}
     data = await _get(SEARCH_URL, params=params)
+
     if not data or "results" not in data:
         print("NO RESULTS FOUND")
         return []
@@ -34,7 +42,6 @@ async def search_players_by_name(query: str):
             continue
 
         for item in group.get("contents", []):
-            # Only NFL players
             if item.get("description") != "NFL":
                 continue
 
@@ -48,8 +55,9 @@ async def search_players_by_name(query: str):
 
     return results
 
-async def get_player_details(espn_uid: str):
-    athlete_id = espn_uid.split("~a:")[-1]
+
+async def get_player_details(espn_id: str):
+    athlete_id = extract_athlete_id(espn_id)
     url = f"https://sports.core.api.espn.com/v2/sports/football/leagues/nfl/athletes/{athlete_id}"
 
     async with httpx.AsyncClient(timeout=10, verify=False) as client:
@@ -75,11 +83,9 @@ async def get_player_details(espn_uid: str):
         "headshot": data.get("headshot", {}).get("href") if data.get("headshot") else None,
     }
 
-import httpx
 
-async def get_player_stats(espn_uid: str):
-    athlete_id = espn_uid.split("~a:")[-1]
-
+async def get_player_stats(espn_id: str):
+    athlete_id = extract_athlete_id(espn_id)
     url = f"https://sports.core.api.espn.com/v2/sports/football/leagues/nfl/athletes/{athlete_id}/statistics"
 
     async with httpx.AsyncClient(timeout=10, verify=False) as client:
@@ -103,3 +109,13 @@ async def get_player_stats(espn_uid: str):
         parsed[name] = stats
 
     return parsed
+
+
+async def get_full_player_card(espn_id: str):
+    details = await get_player_details(espn_id)
+    stats = await get_player_stats(espn_id)
+
+    return {
+        "details": details,
+        "stats": stats
+    }
