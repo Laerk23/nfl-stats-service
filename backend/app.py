@@ -1,8 +1,16 @@
 from fastapi import FastAPI
 from services.espn import search_players_by_name, get_player_details, get_player_stats, get_full_player_card
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],            # or ["http://localhost:5173"]
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/players/search")
 async def search_players(q: str):

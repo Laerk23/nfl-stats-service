@@ -24,38 +24,6 @@ def extract_athlete_id(espn_id: str):
         return espn_id.split("~a:")[-1]
     return espn_id
 
-
-async def search_players_by_name(query: str):
-    print("SEARCH FUNCTION HIT WITH:", query)
-
-    params = {"query": query, "limit": 10}
-    data = await _get(SEARCH_URL, params=params)
-
-    if not data or "results" not in data:
-        print("NO RESULTS FOUND")
-        return []
-
-    results = []
-
-    for group in data["results"]:
-        if group.get("type") != "player":
-            continue
-
-        for item in group.get("contents", []):
-            if item.get("description") != "NFL":
-                continue
-
-            results.append({
-                "espn_id": item.get("uid"),
-                "full_name": item.get("displayName"),
-                "team": item.get("subtitle"),
-                "image": item.get("image", {}).get("default"),
-                "player_url": item.get("link", {}).get("web"),
-            })
-
-    return results
-
-
 async def get_player_details(espn_id: str):
     athlete_id = extract_athlete_id(espn_id)
     url = f"https://sports.core.api.espn.com/v2/sports/football/leagues/nfl/athletes/{athlete_id}"
@@ -110,10 +78,103 @@ async def get_player_stats(espn_id: str):
 
     return parsed
 
+async def get_player_team(espn_id: str):
+    # Convert ESPN UID → numeric athlete ID
+    athlete_id = extract_athlete_id(espn_id)
+
+    # Step 1: fetch athlete metadata
+    url = f"https://sports.core.api.espn.com/v2/sports/football/leagues/nfl/athletes/{athlete_id}?enable=team"
+
+    async with httpx.AsyncClient() as client:
+        r = await client.get(url)
+        if r.status_code != 200:
+            return None
+
+        data = r.json()
+
+    # Step 2: extract the $ref link
+    team_ref = data.get("team", {}).get("$ref")
+    if not team_ref:
+        return None
+
+    # Step 3: fetch the actual team object
+    async with httpx.AsyncClient() as client:
+        team_res = await client.get(team_ref)
+        if team_res.status_code != 200:
+            return None
+
+        team_data = team_res.json()
+
+    # Step 4: extract fields
+    return {
+        "team_name": team_data.get("name"),
+        "team_logo": team_data.get("logos", [{}])[0].get("href"),
+        "team_abbrev": team_data.get("abbreviation"),
+        "team_id": team_data.get("id"),
+    }
+
+async def search_players_by_name(query: str):
+    print("SEARCH FUNCTION HIT WITH:", query)
+
+    params = {"query": query, "limit": 10}
+    data = await _get(SEARCH_URL, params=params)
+
+    if not data or "results" not in data:
+        print("NO RESULTS FOUND")
+        return []
+
+    results = []
+
+    for group in data["results"]:
+        if group.get("type") != "player":
+            continue
+
+        for item in group.get("contents", []):
+            # Only NFL players
+            if item.get("description") != "NFL":
+                continue
+
+            espn_id = item.get("uid")
+
+            # Base player object (your original fields)
+            player = {
+                "espn_id": espn_id,
+                "full_name": item.get("displayName"),
+                "team": item.get("subtitle"),  # ESPN search team (often wrong or null)
+                "image": item.get("image", {}).get("default"),
+                "player_url": item.get("link", {}).get("web"),
+            }
+
+            # ⭐ ENRICH WITH REAL TEAM DATA FROM CORE API
+            team_info = await get_player_team(espn_id)
+
+            if team_info:
+                player["team"] = team_info["team_name"]
+                player["team_logo"] = team_info["team_logo"]
+                player["team_abbrev"] = team_info["team_abbrev"]
+                player["team_id"] = team_info["team_id"]
+            else:
+                player["team"] = "N/A"
+                player["team_logo"] = None
+                player["team_abbrev"] = None
+                player["team_id"] = None
+
+            results.append(player)
+
+    return results
+
+
 
 async def get_full_player_card(espn_id: str):
     details = await get_player_details(espn_id)
     stats = await get_player_stats(espn_id)
+    team_info = await get_player_team(espn_id)
+
+    if team_info:
+        details["team"] = team_info.get("team_name")
+        details["team_logo"] = team_info.get("team_logo")
+        details["team_abbrev"] = team_info.get("team_abbrev")
+        details["team_id"] = team_info.get("team_id")
 
     return {
         "details": details,
